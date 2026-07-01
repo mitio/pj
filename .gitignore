@@ -1,0 +1,4 @@
+# Python bytecode (pj runs via uv; caches aren't committed)
+__pycache__/
+*.pyc
+.DS_Store
