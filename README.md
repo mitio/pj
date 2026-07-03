@@ -79,6 +79,15 @@ the tool later: `git -C pj pull && git add pj && git commit -m 'bump pj'`.
 - `wrapper.sh` `cd`s into the job's directory (so that folder's `.claude/skills`
   and settings apply) and runs your command, logging a start/exit banner.
 
+## Surviving reboots
+
+`launchd` only auto-loads jobs at login from a standard `LaunchAgents` directory.
+A plain `launchctl bootstrap` is in-memory and gets dropped on logout/reboot — so
+enabling a job also **symlinks its plist into `~/Library/LaunchAgents`** (pointing
+back at the tracked copy in `$PJ_JOBS_DIR`). That symlink is what brings jobs back
+after a restart. `pj disable` / `pj rm` remove it; `pj doctor` flags any enabled
+job that isn't linked (`pj apply <name>` re-links it).
+
 ## Layout
 
 ```

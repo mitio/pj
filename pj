@@ -26,6 +26,12 @@ import pjkit  # noqa: E402
 JOBS_DIR = Path(os.environ.get("PJ_JOBS_DIR", Path.home() / ".pj" / "jobs")).expanduser()
 DOMAIN = f"gui/{os.getuid()}"
 
+# launchd only auto-loads plists that physically live in a standard LaunchAgents
+# dir at login; a job merely `bootstrap`ped from elsewhere is in-memory only and
+# disappears on logout/reboot. So enabled jobs get their tracked plist symlinked
+# in here — the dotfiles copy stays the source of truth, and it survives reboots.
+LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
+
 
 # --------------------------------------------------------------------------
 # terminal helpers
@@ -87,6 +93,37 @@ def bootstrap(plist):
 def reload_job(plist, label):
     bootout(label)
     bootstrap(plist)
+
+
+def link_into_launch_agents(plist, name):
+    """Symlink the job's plist into ~/Library/LaunchAgents so launchd re-loads it
+    at every login (bootstrap alone is in-memory and dies on reboot). Returns the
+    link path; (re)points a stale link/file at the current plist."""
+    LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+    link = pjkit.launch_agent_link(LAUNCH_AGENTS_DIR, name)
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(Path(plist).resolve())
+    return link
+
+
+def unlink_from_launch_agents(name):
+    """Drop the ~/Library/LaunchAgents symlink so launchd stops auto-loading it."""
+    link = pjkit.launch_agent_link(LAUNCH_AGENTS_DIR, name)
+    if link.is_symlink() or link.exists():
+        link.unlink()
+
+
+def install_and_load(plist, name, label):
+    """Persist + load: symlink into LaunchAgents (survives reboot), then bootstrap."""
+    link = link_into_launch_agents(plist, name)
+    reload_job(link, label)
+
+
+def uninstall_and_unload(name, label):
+    """Unload + stop auto-loading: bootout, then remove the LaunchAgents symlink."""
+    bootout(label)
+    unlink_from_launch_agents(name)
 
 
 def last_exit(label):
@@ -172,10 +209,10 @@ def apply_job(name, *, regen_wrapper=False, force=False):
         die(f"job.toml invalid: {e}")
     paths, label = write_artifacts(manifest, regen_wrapper=regen_wrapper, force_plist=force)
     if manifest.get("enabled", True):
-        reload_job(paths.plist, label)
+        install_and_load(paths.plist, name, label)
         info(green(f"applied + reloaded {label} ({pjkit.human_schedule(manifest['schedule'])})"))
     else:
-        bootout(label)
+        uninstall_and_unload(name, label)
         info(dim("applied; job is disabled (not loaded)."))
 
 
@@ -369,7 +406,7 @@ def cmd_add(args):
     paths, label = write_artifacts(manifest)
     info(green(f"created {paths.dir}"))
     if enable_now:
-        reload_job(paths.plist, label)
+        install_and_load(paths.plist, manifest["name"], label)
         info(green(f"loaded {label} ({pjkit.human_schedule(manifest['schedule'])})"))
     else:
         info(dim(f"not loaded. `pj enable {manifest['name']}` to start it."))
@@ -456,7 +493,7 @@ def cmd_enable(args):
     m["enabled"] = True
     _write_toml(m)
     paths, label = write_artifacts(m)
-    reload_job(paths.plist, label)
+    install_and_load(paths.plist, args.name, label)
     info(green(f"enabled + loaded {label}"))
 
 
@@ -464,7 +501,7 @@ def cmd_disable(args):
     m, _ = load_job(args.name)
     m["enabled"] = False
     _write_toml(m)
-    bootout(pjkit.build_label(args.name))
+    uninstall_and_unload(args.name, pjkit.build_label(args.name))
     info(yellow(f"disabled {args.name} (unloaded; files kept)"))
 
 
@@ -511,7 +548,7 @@ def cmd_rm(args):
             ans = "n"
         if ans not in ("y", "yes"):
             die("aborted", 0)
-    bootout(pjkit.build_label(args.name))
+    uninstall_and_unload(args.name, pjkit.build_label(args.name))
     shutil.rmtree(paths.dir)
     info(green(f"removed {args.name}"))
 
@@ -530,6 +567,22 @@ def cmd_doctor(args):
     print(_check("jobs dir exists", JOBS_DIR.exists(), str(JOBS_DIR)))
     print(_check("launchd gui domain reachable", launchctl("print", DOMAIN).returncode == 0, DOMAIN))
     print(_check("uv available", shutil.which("uv") is not None, shutil.which("uv") or "not found"))
+
+    unlinked = []
+    for toml_path in all_jobs():
+        m = pjkit.load_toml(toml_path.read_text())
+        if not m.get("enabled", True):
+            continue
+        name = toml_path.parent.name
+        link = pjkit.launch_agent_link(LAUNCH_AGENTS_DIR, name)
+        want = pjkit.job_paths(JOBS_DIR, name).plist.resolve()
+        if not (link.is_symlink() and link.resolve() == want):
+            unlinked.append(name)
+    print(_check(
+        "enabled jobs auto-load at login (symlinked in LaunchAgents)",
+        not unlinked,
+        "all linked" if not unlinked else "run `pj apply` for: " + ", ".join(unlinked),
+    ))
 
 
 # --------------------------------------------------------------------------

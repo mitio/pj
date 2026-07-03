@@ -153,6 +153,13 @@ class TestLabelAndPaths(unittest.TestCase):
         self.assertEqual(str(p.log_out), "/root/jobs/triage/logs/out.log")
         self.assertEqual(str(p.log_err), "/root/jobs/triage/logs/err.log")
 
+    def test_launch_agent_link(self):
+        link = pjkit.launch_agent_link("/home/u/Library/LaunchAgents", "triage")
+        self.assertEqual(
+            str(link),
+            "/home/u/Library/LaunchAgents/com.dimitrov.pj.triage.plist",
+        )
+
 
 class TestRenderWrapper(unittest.TestCase):
     def test_includes_shebang_cd_and_command(self):

@@ -241,6 +241,14 @@ def job_paths(jobs_dir, name):
     )
 
 
+def launch_agent_link(launch_agents_dir, name):
+    """Path of the plist symlink under a LaunchAgents dir that makes launchd
+    auto-load a job at login. launchd only auto-loads plists physically present
+    in a standard LaunchAgents dir; a job merely `bootstrap`ped from elsewhere
+    is in-memory only and vanishes on logout/reboot (no filesystem access)."""
+    return Path(launch_agents_dir) / f"{build_label(name)}.plist"
+
+
 def render_wrapper(working_dir, command):
     """The per-job wrapper.sh. Generated once, then owned by the user.
 
