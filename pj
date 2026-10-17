@@ -15,6 +15,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 _SELF = Path(__file__).resolve()  # follows a ~/bin/pj symlink into the checkout
@@ -82,6 +83,11 @@ def is_loaded(label):
 
 def bootout(label):
     launchctl("bootout", f"{DOMAIN}/{label}")  # ignore errors: may not be loaded
+    # bootout can return before launchd finishes tearing the service down (e.g.
+    # mid-run); a bootstrap meanwhile fails with "5: Input/output error".
+    deadline = time.monotonic() + 10
+    while is_loaded(label) and time.monotonic() < deadline:
+        time.sleep(0.1)
 
 
 def bootstrap(plist):
