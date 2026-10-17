@@ -96,7 +96,7 @@ $PJ_JOBS_DIR/
     job.toml                       # the job definition — source of truth (tracked)
     wrapper.sh                     # generated; what actually runs (tracked, editable)
     com.dimitrov.pj.<name>.plist   # generated launchd config (tracked)
-    logs/{out,err}.log             # runtime logs (gitignore these)
+    logs/{out,err}.log             # runtime logs (gitignore these; cap with log_limit)
 ```
 
 ## Source-of-truth model
@@ -139,6 +139,20 @@ pj add x ... --run-at-load          # also run once when (re)loaded / at login
 ```
 
 Everything translates to launchd `StartCalendarInterval` / `StartInterval`.
+
+## Log limits
+
+Logs grow forever by default. To cap them, pass `--log-limit` to `pj add`, or
+set `log_limit` in `job.toml` and `pj apply`:
+
+```
+pj add x --every 1m ... --log-limit 10MB    # also 512K, 1G, or plain bytes
+```
+
+Before each run the wrapper checks `out.log` and `err.log`. Any log over the
+limit is cut down to its newest half, on whole lines. So a log never holds more
+than the limit plus one run's output. The cut happens in place, which is safe
+mid-run: launchd opens the logs with `O_APPEND`, so writes go to the new end.
 
 ## Running `claude` unattended
 

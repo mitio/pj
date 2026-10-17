@@ -173,9 +173,16 @@ def write_artifacts(manifest, *, regen_wrapper=False, force_plist=False):
     paths.log_out.parent.mkdir(parents=True, exist_ok=True)
 
     if regen_wrapper or _is_generated(paths.wrapper):
-        paths.wrapper.write_text(
-            pjkit.render_wrapper(manifest["working_dir"], manifest["command"])
-        )
+        try:
+            wrapper = pjkit.render_wrapper(
+                manifest["working_dir"],
+                manifest["command"],
+                log_limit=manifest.get("log_limit"),
+                log_files=(paths.log_out, paths.log_err),
+            )
+        except pjkit.JobSpecError as e:
+            die(f"{name}: log_limit: {e}")
+        paths.wrapper.write_text(wrapper)
         paths.wrapper.chmod(0o755)
     else:
         info(dim("  kept your customized wrapper.sh (--regen-wrapper to rebuild)"))
@@ -396,6 +403,12 @@ def manifest_from_flags(args):
         "enabled": not args.disabled,
         "schedule": schedule,
     }
+    if args.log_limit:
+        try:
+            pjkit.parse_size(args.log_limit)
+        except pjkit.JobSpecError as e:
+            die(f"--log-limit: {e}")
+        manifest["log_limit"] = args.log_limit
     return manifest, (not args.disabled)
 
 
@@ -468,6 +481,8 @@ def cmd_show(args):
     print(f"  schedule : {pjkit.human_schedule(m['schedule'])}")
     print(f"  command  : {m['command']}")
     print(f"  dir      : {m['working_dir']}")
+    if m.get("log_limit"):
+        print(f"  log limit: {m['log_limit']} per log (trimmed to the newest half when over)")
     print(f"  enabled  : {m.get('enabled')}    launchd: {'loaded' if is_loaded(label) else 'not loaded'}")
     print(f"  files    : {paths.dir}")
     print(bold("\n  recent stdout:"))
@@ -609,6 +624,7 @@ def build_parser():
     a.add_argument("--desc", metavar="TEXT", help="description")
     a.add_argument("--run-at-load", action="store_true", help="also run once when (re)loaded")
     a.add_argument("--disabled", action="store_true", help="create but don't load yet")
+    a.add_argument("--log-limit", metavar="SIZE", help="cap each log, e.g. 10MB (trimmed to the newest half when over)")
     a.set_defaults(func=cmd_add)
 
     for name, fn, help in [

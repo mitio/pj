@@ -1,5 +1,8 @@
 import plistlib
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 import pjkit
 
@@ -55,6 +58,23 @@ class TestParseEvery(unittest.TestCase):
     def test_rejects_garbage(self):
         with self.assertRaises(pjkit.JobSpecError):
             pjkit.parse_every("soon")
+
+
+class TestParseSize(unittest.TestCase):
+    def test_binary_units(self):
+        self.assertEqual(pjkit.parse_size("10MB"), 10 * 1024**2)
+        self.assertEqual(pjkit.parse_size("512K"), 512 * 1024)
+        self.assertEqual(pjkit.parse_size("1g"), 1024**3)
+        self.assertEqual(pjkit.parse_size("2 MiB"), 2 * 1024**2)
+
+    def test_plain_bytes(self):
+        self.assertEqual(pjkit.parse_size("2048"), 2048)
+        self.assertEqual(pjkit.parse_size(2048), 2048)
+
+    def test_rejects_bad_values(self):
+        for bad in ["", "10TB", "ten", "1.5MB", "0", "-1M", True, 1.5]:
+            with self.assertRaises(pjkit.JobSpecError, msg=repr(bad)):
+                pjkit.parse_size(bad)
 
 
 class TestParseDays(unittest.TestCase):
@@ -178,6 +198,36 @@ class TestRenderWrapper(unittest.TestCase):
         self.assertNotIn("status=", w)
         self.assertIn("rc=$?", w)
         self.assertIn("exit $rc", w)
+
+
+class TestRenderWrapperLogLimit(unittest.TestCase):
+    def test_no_limit_renders_no_trim(self):
+        self.assertNotIn("tail -c", pjkit.render_wrapper("/tmp", "true"))
+
+    def test_trim_precedes_run_banner(self):
+        w = pjkit.render_wrapper("/tmp", "true", log_limit="10MB", log_files=["/l/out.log", "/l/err.log"])
+        self.assertIn("for f in /l/out.log /l/err.log; do", w)
+        self.assertIn("> 10485760", w)
+        self.assertIn("tail -c 5242880", w)
+        self.assertLess(w.index("tail -c"), w.index("=== pj run"))
+
+    def test_invalid_limit_raises(self):
+        with self.assertRaises(pjkit.JobSpecError):
+            pjkit.render_wrapper("/tmp", "true", log_limit="lots", log_files=["/l/out.log"])
+
+    def test_trims_to_newest_whole_lines_and_leaves_small_logs(self):
+        with tempfile.TemporaryDirectory() as d:
+            big, small = Path(d) / "big log", Path(d) / "small.log"
+            big.write_text("".join(f"line {i:04d}\n" for i in range(1000)))  # 10 bytes/line
+            small.write_text("keep me\n")
+            w = pjkit.render_wrapper(d, ":", log_limit="2K", log_files=[big, small])
+            subprocess.run(["/bin/zsh", "-c", w], check=True, capture_output=True)
+            lines = big.read_text().splitlines()
+            self.assertLessEqual(big.stat().st_size, 1024)
+            self.assertEqual(lines[-1], "line 0999")
+            self.assertTrue(all(len(l) == 9 for l in lines))
+            self.assertEqual(small.read_text(), "keep me\n")
+            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ["big log", "small.log"])
 
 
 class TestRenderPlist(unittest.TestCase):
